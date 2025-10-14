@@ -1,0 +1,12 @@
+*.env
+*.env.*
+*.env*
+.env
+.env.local
+.env.*
+.env*
+mcp.json
+start-supabase-mcp.sh
+start-taskmaster-ai.sh
+
+ 
