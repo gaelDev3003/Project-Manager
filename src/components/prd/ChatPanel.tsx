@@ -445,11 +445,14 @@ ${answers}
       const result = await response.json();
 
       // Add AI response
+      // result.version is the full version object, result.version.version is the version number
+      const versionNumber =
+        result.version?.version || result.version || '새로운';
       const aiResponse: ChatMessage = {
         id: (Date.now() + 1).toString(),
         project_id: projectId,
         role: 'assistant',
-        content: `피드백이 적용되어 새로운 버전(v${result.version})이 생성되었습니다.`,
+        content: `피드백이 적용되어 새로운 버전(v${versionNumber})이 생성되었습니다.`,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         type: 'chat',
@@ -623,14 +626,6 @@ ${answers}
               placeholder="피드백을 입력하세요... (⌘+Enter로 전송)"
               className="min-h-[80px] resize-none pr-12 border-gray-200 focus:border-indigo-300 focus:ring-indigo-200"
             />
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute bottom-2 right-2 h-8 w-8 hover:bg-gray-50"
-              aria-label="Attach file"
-            >
-              <Paperclip className="h-4 w-4" />
-            </Button>
           </div>
           <Button
             onClick={handleSend}

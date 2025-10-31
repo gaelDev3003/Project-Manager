@@ -5,8 +5,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
 
 export default function LoginForm() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState(
+    process.env.NEXT_PUBLIC_TEST_USER_EMAIL || ''
+  );
+  const [password, setPassword] = useState(
+    process.env.NEXT_PUBLIC_TEST_USER_PASSWORD || ''
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

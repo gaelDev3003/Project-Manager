@@ -152,7 +152,7 @@ export default function ProjectDetailPage({
     }
   };
 
-  const fetchVersions = async () => {
+  const fetchVersions = async (): Promise<PRDVersion[]> => {
     try {
       const authHeaders = await getClientAuthHeaders();
       const headers: Record<string, string> = {
@@ -166,8 +166,12 @@ export default function ProjectDetailPage({
         const data = await res.json();
         const list: PRDVersion[] = data.versions || [];
         setVersions(list);
+        return list;
       }
-    } catch (e) {}
+      return [];
+    } catch (e) {
+      return [];
+    }
   };
 
   const fetchVersion = async (vid: string) => {
@@ -409,9 +413,14 @@ export default function ProjectDetailPage({
             <div className="p-6">
               <ChatPanel
                 projectId={params.id}
-                onPRDFinalized={() => {
+                onPRDFinalized={async () => {
                   // PRD가 완료되면 버전 목록을 새로고침
-                  fetchVersions();
+                  const updatedVersions = await fetchVersions();
+                  // 새로 생성된 버전을 자동으로 선택
+                  if (updatedVersions.length > 0) {
+                    const latestVersion = updatedVersions[0]; // 최신 버전이 첫 번째
+                    handleVersionSelect(latestVersion.id);
+                  }
                 }}
                 selectedVersion={
                   selectedVersion

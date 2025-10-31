@@ -385,10 +385,12 @@ export async function POST(
     }
 
     // mark feedback applied and update current pointer
+    // Use versionId if provided, otherwise use version.id from the base version
+    const feedbackVersionId = versionId || version.id;
     await supabase
       .from('project_prd_feedbacks')
       .update({ applied: true })
-      .eq('prd_version_id', versionId)
+      .eq('prd_version_id', feedbackVersionId)
       .eq('author_id', authorId)
       .eq('message', message);
 
