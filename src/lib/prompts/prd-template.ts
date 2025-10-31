@@ -1,116 +1,99 @@
 // PRD_V3 - 중앙화된 프롬프트 시스템
 // 품질 규칙: API ≥5, Data 스키마(관계형/비관계형), Features 5-7개, NFRs 포함
 
-export const PRD_SYSTEM_PROMPT_V3 = `당신은 경험 많은 프로덕트 매니저입니다. 주어진 아이디어를 바탕으로 체계적이고 실용적인 PRD를 작성합니다.
+// PRD_V3 템플릿 제거 (V4로 통일)
 
-**품질 기준 (PRD_V3):**
-1. **API 엔드포인트**: 최소 5개 이상, 각각 method/path/description/request_body/response/auth_required/error_codes(400/401/403/404/409/422/429/500 중 3개 이상) 포함
-2. **데이터 스키마**: 관계형(실행 가능한 SQL+인덱스+FK+NOT NULL/DEFAULT+권한 정책) 또는 비관계형(컬렉션 모델+인덱스+보안 규칙) 중 하나는 반드시 존재
-3. **기능**: 5-7개, {name, priority, risk, effort, impacts, tags, dependencies, notes} + 구현 힌트 포함
-4. **구현 단계**: 8시간 단위, 각 Phase ≥3 acceptance_criteria
-5. **NFRs**: 성능/P95, 가용성, 보안, 프라이버시, 관측성, 접근성, i18n 섹션 포함
-6. **JSON만 응답**: 단일 객체, 파싱 가능
+// PRD_V4 - 의도 중심형 템플릿 (수량 강제 제거, Why/Scope/DoD 추가, SQL 금지 → Schema Summary)
+export const PRD_SYSTEM_PROMPT_V4 = `당신은 경험 많은 프로덕트 매니저입니다. 주어진 아이디어의 "의도"를 정확히 반영하는 PRD를 작성합니다.
 
-**출력 형식:**
+핵심 원칙 (PRD_V4):
+- 형식이 아닌 의도 중심으로 서술하되, 최종 출력은 JSON이어야 함
+- 수량 강제(예: API 개수, 기능 개수) 금지
+- Why/Scope/Definition of Done(DoD) 필수
+- SQL 금지: 스키마는 "schema_summary"로 요약 (엔티티/필드/관계 중심)
+- goals는 정량 기준을 포함한 검증 가능한 표현이어야 함 (예: "D30 내 활성 사용자 ≥ 1,000명")
+
+출력 형식(JSON):
 {
-  "summary": "프로젝트 한 줄 요약",
-  "goals": ["측정 가능한 목표 3개"],
+  "summary": "한 줄 요약",
+  "why": "왜 이 제품을 만드는가 (문제/기회/의도)",
+  "goals": ["정량 기준 포함 목표"],
+  "scope": {
+    "in_scope": ["범위 내"],
+    "out_of_scope": ["범위 밖"]
+  },
   "key_features": [
     {
       "name": "기능명",
       "priority": "high|medium|low",
       "risk": "high|medium|low",
       "effort": "high|medium|low",
-      "impacts": ["영향받는 사용자/시스템"],
-      "tags": ["태그1", "태그2"],
-      "dependencies": ["의존성 기능들"],
-      "notes": "구현 힌트 및 세부사항"
+      "impacts": ["영향"],
+      "dependencies": ["의존성"],
+      "notes": "설명"
     }
   ],
-  "technical_stack": {
-    "frontend": ["구체적인 기술 스택"],
-    "backend": ["구체적인 기술 스택"],
-    "database": ["데이터베이스 기술"],
-    "auth": ["인증 기술"],
-    "deployment": ["배포 기술"]
-  },
-  "database_schema": {
-    "type": "relational|non_relational",
-    "relational": {
-      "tables": [
-        {
-          "name": "테이블명",
-          "sql": "CREATE TABLE ...",
-          "indexes": ["CREATE INDEX ..."],
-          "rls_policy": "CREATE POLICY ..."
-        }
-      ]
-    },
-    "non_relational": {
-      "collections": [
-        {
-          "name": "컬렉션명",
-          "document_example": {},
-          "indexes": ["인덱스 정의"],
-          "rules": ["보안 규칙"]
-        }
-      ]
-    }
+  "schema_summary": {
+    "entities": [
+      {
+        "name": "엔티티명",
+        "description": "간단 설명",
+        "fields": [
+          { "name": "필드명", "type": "string|number|boolean|date|json", "notes": "옵션" }
+        ],
+        "relationships": ["관계 설명 (예: user 1:N project)"]
+      }
+    ]
   },
   "api_endpoints": [
     {
-      "method": "GET|POST|PUT|DELETE",
+      "method": "GET|POST|PUT|DELETE|PATCH",
       "path": "/api/...",
-      "description": "엔드포인트 설명",
+      "description": "의도 중심 설명",
       "auth_required": true,
-      "request_body": {},
-      "response": {},
-      "error_codes": ["400", "401", "403", "404", "500"]
+      "request_body": { "sample": "JSON 객체" }, // POST/PUT/PATCH의 경우 샘플 JSON 필수
+      "response": { "id": "uuid", "data": "..." }, // 모든 endpoint의 성공 응답 샘플 필수
+      "error_codes": { "400": "Bad Request", "401": "Unauthorized", "404": "Not Found", "500": "Internal Server Error" }, // 최소 3개 이상
+      "rate_limit": { "requests_per_minute": 60 } // 선택
     }
   ],
   "implementation_phases": [
     {
       "phase": "Phase 0",
       "title": "제목",
-      "tasks": ["구체적인 작업 1", "구체적인 작업 2"],
+      "tasks": ["작업"],
       "estimated_hours": 8,
-      "acceptance_criteria": ["기준1", "기준2", "기준3"]
+      "acceptance_criteria": ["기준"]
     }
   ],
   "nfrs": {
-    "performance": {
-      "p95_latency_ms": 200,
-      "throughput_rps": 1000
-    },
-    "availability": "99.9%",
-    "security": ["보안 요구사항"],
-    "privacy": ["개인정보 보호 요구사항"],
-    "observability": ["모니터링 요구사항"],
-    "accessibility": ["접근성 요구사항"],
-    "i18n": ["국제화 요구사항"]
+    "performance": {},
+    "availability": "",
+    "security": [],
+    "privacy": [],
+    "observability": [],
+    "accessibility": [],
+    "i18n": []
   },
-  "environment_variables": [
-    {
-      "key": "환경변수명",
-      "description": "설명",
-      "required": true
-    }
-  ],
-  "out_of_scope": ["제외 항목들"],
-  "risks": [
-    {
-      "risk": "위험 요소",
-      "mitigation": "완화 전략"
-    }
-  ],
-  "acceptance_criteria": ["구체적이고 테스트 가능한 기준"],
-  "prompt_version": "PRD_V3"
+  "definition_of_done": ["DoD 목록"],
+  "out_of_scope": ["제외 항목"],
+  "risks": [{ "risk": "", "mitigation": "" }],
+  "prompt_version": "PRD_V4"
 }
 
-**CRITICAL: RESPOND ONLY WITH VALID JSON - NO OTHER TEXT OR MARKDOWN**
-**The response must be a single JSON object that can be parsed directly**`;
+규칙:
+- 어떤 형태의 SQL도 생성하지 마세요. (예: CREATE TABLE, CREATE INDEX 등 금지)
+- schema_summary만 사용하여 데이터 구조를 요약하세요.
+- goals는 정량 목표(시간 제약: D30, Q2 등 + 비교 연산자) 또는 정성 목표(UX, 유지보수성 등) 중 하나여야 합니다.
+- api_endpoints의 POST/PUT/PATCH는 request_body 샘플 JSON을 포함해야 합니다.
+- 모든 api_endpoints는 response 샘플 JSON과 error_codes(최소 3개)를 포함해야 합니다.
+- scope.in_scope는 key_features 기반으로 생성하세요.
+- scope.out_of_scope는 프로젝트 의도(why, summary)를 고려하여 명확히 범위 밖인 항목을 식별하세요.
+- 반드시 유효한 JSON 한 개만 응답하세요.`;
 
-export function makePRDCreatePrompt(
+// V3 생성 프롬프트 제거 (V4 사용)
+
+export function makePRDCreatePromptV4(
   idea: string,
   previousErrors?: string[]
 ): string {
@@ -118,213 +101,43 @@ export function makePRDCreatePrompt(
     ? `\n\n이전 생성에서 발견된 오류들:\n${previousErrors.join('\n')}\n위 오류들을 수정하여 다시 생성해주세요.`
     : '';
 
-  return `다음 아이디어를 바탕으로 상세한 PRD(Product Requirements Document)를 생성해주세요.
+  return `다음 아이디어를 바탕으로 의도 중심 PRD(PRD_V4)를 생성해주세요.
 아이디어: ${idea}
 
-**중요한 요구사항:**
-1. **API 엔드포인트**: 최소 5개 이상, 각각 method/path/description/request_body/response/auth_required/error_codes(400/401/403/404/409/422/429/500 중 3개 이상) 포함
-2. **데이터 스키마**: 관계형(실행 가능한 SQL+인덱스+FK+NOT NULL/DEFAULT+권한 정책) 또는 비관계형(컬렉션 모델+인덱스+보안 규칙) 중 하나는 반드시 존재
-3. **기능**: 5-7개, {name, priority, risk, effort, impacts, tags, dependencies, notes} + 구현 힌트 포함
-4. **구현 단계**: 8시간 단위, 각 Phase ≥3 acceptance_criteria
-5. **NFRs**: 성능/P95, 가용성, 보안, 프라이버시, 관측성, 접근성, i18n 섹션 포함
-6. **기술 스택**: frontend, backend, database, auth, deployment 구체적으로 명시
-7. **환경 변수**: 필요한 환경 변수들과 설명 포함
-8. **리스크 관리**: 위험 요소와 완화 전략 포함
+요구사항:
+- Why/Scope/Definition of Done(DoD)를 반드시 포함하세요.
+- 수량 강제 조건(예: 최소 X개)은 금지합니다.
+- SQL을 생성하지 말고 schema_summary로 데이터 구조를 요약하세요.
+- goals는 정량 목표(시간 제약 포함: D30, Q2 등) 또는 정성 목표(UX, 유지보수성 등) 중 하나여야 합니다.
+- api_endpoints의 POST/PUT/PATCH는 request_body 샘플 JSON을 포함해야 합니다.
+- 모든 api_endpoints는 response 샘플 JSON과 error_codes(최소 3개)를 포함해야 합니다.
 
-**출력 형식 (정확히 이 구조를 따라주세요):**
-{
-  "summary": "프로젝트 한 줄 요약",
-  "goals": ["측정 가능한 목표 3개"],
-  "key_features": [
-    {
-      "name": "기능명",
-      "priority": "high|medium|low",
-      "risk": "high|medium|low", 
-      "effort": "high|medium|low",
-      "impacts": ["영향받는 사용자/시스템"],
-      "tags": ["태그1", "태그2"],
-      "dependencies": ["의존성 기능들"],
-      "notes": "구현 힌트 및 세부사항"
-    }
-  ],
-  "technical_stack": {
-    "frontend": ["구체적인 기술 스택"],
-    "backend": ["구체적인 기술 스택"],
-    "database": ["데이터베이스 기술"],
-    "auth": ["인증 기술"],
-    "deployment": ["배포 기술"]
-  },
-  "database_schema": {
-    "type": "relational",
-    "relational": {
-      "tables": [
-        {
-          "name": "테이블명",
-          "sql": "CREATE TABLE ...",
-          "indexes": ["CREATE INDEX ..."],
-          "rls_policy": "CREATE POLICY ..."
-        }
-      ]
-    }
-  },
-  "api_endpoints": [
-    {
-      "method": "GET|POST|PUT|DELETE",
-      "path": "/api/...",
-      "description": "엔드포인트 설명",
-      "auth_required": true,
-      "request_body": {},
-      "response": {},
-      "error_codes": ["400", "401", "403", "404", "500"]
-    }
-  ],
-  "implementation_phases": [
-    {
-      "phase": "Phase 0",
-      "title": "제목",
-      "tasks": ["구체적인 작업 1", "구체적인 작업 2"],
-      "estimated_hours": 8,
-      "acceptance_criteria": ["기준1", "기준2", "기준3"]
-    }
-  ],
-  "nfrs": {
-    "performance": {
-      "p95_latency_ms": 200,
-      "throughput_rps": 1000
-    },
-    "availability": "99.9%",
-    "security": ["보안 요구사항"],
-    "privacy": ["개인정보 보호 요구사항"],
-    "observability": ["모니터링 요구사항"],
-    "accessibility": ["접근성 요구사항"],
-    "i18n": ["국제화 요구사항"]
-  },
-  "environment_variables": [
-    {
-      "key": "환경변수명",
-      "description": "설명",
-      "required": true
-    }
-  ],
-  "out_of_scope": ["제외 항목들"],
-  "risks": [
-    {
-      "risk": "위험 요소",
-      "mitigation": "완화 전략"
-    }
-  ],
-  "acceptance_criteria": ["구체적이고 테스트 가능한 기준"],
-  "prompt_version": "PRD_V3"
+출력은 반드시 PRD_V4 JSON 스펙을 따르세요.
+prompt_version은 "PRD_V4"이어야 합니다.${errorContext}`;
 }
 
-구체적이고 실행 가능하게 작성하세요.${errorContext}`;
-}
+// V3 수정 프롬프트 제거 (V4 reviewer 사용)
 
-export function makePRDRevisePrompt(
+export function makePRDReviewerPromptV4(
   base: unknown,
-  feedbackText: string
+  issues: string[]
 ): string {
-  return `기존 PRD를 사용자 피드백에 따라 수정해주세요.
+  return `아래 PRD를 자체 리뷰(self-critique)하고 PRD_V4 기준에 맞게 개선하세요.
 
-**기존 PRD 요약:**
+기존 PRD(JSON):
 ${JSON.stringify(base, null, 2)}
 
-**사용자 피드백:**
-${feedbackText}
+발견된 이슈:
+- ${issues.join('\n- ')}
 
-**수정 요구사항:**
-1. 피드백을 반영하여 PRD_V3 구조로 완전히 재생성
-2. API 엔드포인트, 데이터 스키마, NFRs를 모두 포함
-3. features 배열에 모든 기능을 구조화하여 포함
-4. implementation_phases에 구체적인 단계별 계획 포함
-5. prompt_version: "PRD_V3" 유지
+개선 지침:
+- Why/Scope/DoD 누락 또는 미흡 시 보완
+- goals를 정량 목표(시간 제약 포함) 또는 정성 목표(UX, 유지보수성 등)로 정교화
+- SQL 흔적 전면 제거 및 schema_summary로 전환/보강
+- 의도 중심 설명으로 간결성/명확성 향상
+- api_endpoints에 request_body/response 샘플 JSON과 error_codes 보완
+- scope.in_scope는 key_features 기반으로 자동 생성, scope.out_of_scope는 명확히 식별
+- prompt_version은 "PRD_V4"
 
-**출력 형식 (PRD_V3 구조):**
-{
-  "summary": "프로젝트 한 줄 요약",
-  "goals": ["측정 가능한 목표 3개"],
-  "key_features": [
-    {
-      "name": "기능명",
-      "priority": "high|medium|low",
-      "risk": "high|medium|low",
-      "effort": "high|medium|low",
-      "impacts": ["영향받는 사용자/시스템"],
-      "tags": ["태그1", "태그2"],
-      "dependencies": ["의존성 기능들"],
-      "notes": "구현 힌트 및 세부사항"
-    }
-  ],
-  "technical_stack": {
-    "frontend": ["구체적인 기술 스택"],
-    "backend": ["구체적인 기술 스택"],
-    "database": ["데이터베이스 기술"],
-    "auth": ["인증 기술"],
-    "deployment": ["배포 기술"]
-  },
-  "database_schema": {
-    "type": "relational|non_relational",
-    "relational": {
-      "tables": [
-        {
-          "name": "테이블명",
-          "sql": "CREATE TABLE ...",
-          "indexes": ["CREATE INDEX ..."],
-          "rls_policy": "CREATE POLICY ..."
-        }
-      ]
-    }
-  },
-  "api_endpoints": [
-    {
-      "method": "GET|POST|PUT|DELETE",
-      "path": "/api/...",
-      "description": "엔드포인트 설명",
-      "auth_required": true,
-      "request_body": {},
-      "response": {},
-      "error_codes": ["400", "401", "403", "404", "500"]
-    }
-  ],
-  "implementation_phases": [
-    {
-      "phase": "Phase 0",
-      "title": "제목",
-      "tasks": ["구체적인 작업 1", "구체적인 작업 2"],
-      "estimated_hours": 8,
-      "acceptance_criteria": ["기준1", "기준2", "기준3"]
-    }
-  ],
-  "nfrs": {
-    "performance": {
-      "p95_latency_ms": 200,
-      "throughput_rps": 1000
-    },
-    "availability": "99.9%",
-    "security": ["보안 요구사항"],
-    "privacy": ["개인정보 보호 요구사항"],
-    "observability": ["모니터링 요구사항"],
-    "accessibility": ["접근성 요구사항"],
-    "i18n": ["국제화 요구사항"]
-  },
-  "environment_variables": [
-    {
-      "key": "환경변수명",
-      "description": "설명",
-      "required": true
-    }
-  ],
-  "out_of_scope": ["제외 항목들"],
-  "risks": [
-    {
-      "risk": "위험 요소",
-      "mitigation": "완화 전략"
-    }
-  ],
-  "acceptance_criteria": ["구체적이고 테스트 가능한 기준"],
-  "prompt_version": "PRD_V3"
-}
-
-**CRITICAL: RESPOND ONLY WITH VALID JSON - NO OTHER TEXT OR MARKDOWN**
-**The response must be a single JSON object that can be parsed directly**`;
+반드시 유효한 PRD_V4 JSON 1개만 출력하세요.`;
 }

@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { PRDData } from '@/types/prd';
-import { PRD_SYSTEM_PROMPT_V3, makePRDCreatePrompt } from '@/lib/prompts/prd-template';
+import {
+  PRD_SYSTEM_PROMPT_V4,
+  makePRDCreatePromptV4,
+  makePRDReviewerPromptV4,
+} from '@/lib/prompts/prd-template';
+import { makeScopeReviewerPrompt } from '@/lib/prompts/scope-reviewer-prompt';
+import { makeAPIReviewerPrompt } from '@/lib/prompts/api-reviewer-prompt';
+import { validatePRDV4 } from '@/lib/prd-schema';
+import type { PRDV4 } from '@/lib/prd-schema';
+import { autoFillScope, validateScope } from '@/lib/scope-enhancer';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 // Environment configuration
-const MODEL_PROVIDER = (process.env.MODEL_PROVIDER ?? 'openai').toLowerCase();
 const OPENAI_PRD_MODEL = (process.env.OPENAI_PRD_MODEL ?? 'gpt-4o-mini').trim();
 const OPENAI_PRD_TEMPERATURE = Number(
   process.env.OPENAI_PRD_TEMPERATURE ?? '0.2'
@@ -51,7 +58,7 @@ async function callOpenAIJSON(systemPrompt: string, userPrompt: string) {
 
       const duration = Date.now() - t0;
       console.log(
-        `[LLM] model=${OPENAI_PRD_MODEL}, dur_ms=${duration}, status=${res.status}, prompt_v=PRD_V3`
+        `[LLM] model=${OPENAI_PRD_MODEL}, dur_ms=${duration}, status=${res.status}, prompt_v=PRD_V4`
       );
 
       if (!res.ok) {
@@ -72,11 +79,11 @@ async function callOpenAIJSON(systemPrompt: string, userPrompt: string) {
         console.log(`[LLM] JSON parse failed, trying extractFirstJson`);
         return JSON.parse(extractFirstJson(content));
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const duration = Date.now() - t0;
       console.log(
         `[LLM] attempt=${attempt + 1} failed after ${duration}ms:`,
-        error?.message || 'Unknown error'
+        (error as Error)?.message || 'Unknown error'
       );
 
       if (attempt === maxRetries) {
@@ -84,11 +91,12 @@ async function callOpenAIJSON(systemPrompt: string, userPrompt: string) {
       }
 
       // AbortError, 408, 429, 5xx에 대해서만 재시도
+      const errorObj = error as { name?: string; message?: string };
       const shouldRetry =
-        error?.name === 'AbortError' ||
-        error?.message?.includes('408') ||
-        error?.message?.includes('429') ||
-        error?.message?.includes('5');
+        errorObj?.name === 'AbortError' ||
+        errorObj?.message?.includes('408') ||
+        errorObj?.message?.includes('429') ||
+        errorObj?.message?.includes('5');
 
       if (shouldRetry) {
         const delay = baseDelay * Math.pow(1.3, attempt);
@@ -128,10 +136,7 @@ export async function POST(request: NextRequest) {
     const { projectId, idea } = await request.json();
 
     if (!idea) {
-      return NextResponse.json(
-        { error: 'Idea is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Idea is required' }, { status: 400 });
     }
 
     // Verify project ownership if projectId is provided
@@ -144,26 +149,65 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (projectError || !project) {
-        return NextResponse.json({ error: 'Project not found' }, { status: 404 });
+        return NextResponse.json(
+          { error: 'Project not found' },
+          { status: 404 }
+        );
       }
     }
 
-    // Generate PRD using OpenAI with validation and retry
+    // Generate PRD (V4) and run enhanced reviewer loop with Scope/API sub-loops
+    const totalStartTime = Date.now();
     let prdData = await generatePRD(idea);
-    let errors = await validatePRD(prdData);
 
-    // Retry if validation fails
+    // Ensure prompt_version is explicitly set to PRD_V4
+    prdData.prompt_version = 'PRD_V4';
+
+    // Auto-fill scope from key_features
+    prdData = autoFillScope(prdData);
+
+    let errors = await validatePRD_V4(prdData);
+
+    // Always run a reviewer pass to self-critique and improve
+    const reviewStartTime = Date.now();
+    prdData = await reviewPRD_V4(prdData, errors);
+    const reviewDuration = Date.now() - reviewStartTime;
+
+    // Scope 전용 서브 루프
+    const scopeStartTime = Date.now();
+    const scopeIssues = validateScope(prdData);
+    if (
+      scopeIssues.length > 0 ||
+      !prdData.scope.out_of_scope ||
+      prdData.scope.out_of_scope.length === 0
+    ) {
+      const scopeResult = await reviewScope_V4(prdData);
+      prdData.scope = scopeResult.scope;
+    }
+    const scopeDuration = Date.now() - scopeStartTime;
+
+    // API 계약 전용 서브 루프
+    const apiStartTime = Date.now();
+    const apiIssues = validateAPIEndpoints(prdData);
+    if (
+      apiIssues.length > 0 ||
+      !prdData.api_endpoints ||
+      prdData.api_endpoints.length === 0
+    ) {
+      const apiResult = await reviewAPI_V4(prdData);
+      prdData.api_endpoints = apiResult.api_endpoints;
+    }
+    const apiDuration = Date.now() - apiStartTime;
+
+    // 최종 검증
+    errors = await validatePRD_V4(prdData);
+
     if (errors.length > 0) {
-      console.log('PRD validation failed, retrying...', errors);
-      prdData = await generatePRD(idea, errors);
-      errors = await validatePRD(prdData);
-
-      if (errors.length > 0) {
-        console.warn('PRD validation still failed after retry:', errors);
-      }
+      console.warn('[PRD_V4] validation failed after review:', errors);
     }
 
     // Save PRD to database only if projectId is provided
+    let savedPrdId: string | null = null;
     if (projectId) {
       const { data: prd, error: saveError } = await supabase
         .from('project_prds')
@@ -178,6 +222,64 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: saveError.message }, { status: 500 });
       }
 
+      savedPrdId = prd.id;
+
+      // PRD 생성 및 리뷰 로그 저장
+      await savePRDLog(
+        savedPrdId,
+        null,
+        'generation',
+        'initial',
+        { idea },
+        prdData,
+        [],
+        Date.now() - totalStartTime
+      );
+      await savePRDLog(
+        savedPrdId,
+        null,
+        'review',
+        'first_review',
+        prdData,
+        prdData,
+        errors,
+        reviewDuration
+      );
+      if (scopeIssues.length > 0 || scopeDuration > 0) {
+        await savePRDLog(
+          savedPrdId,
+          null,
+          'scope_review',
+          'scope_loop',
+          prdData,
+          { scope: prdData.scope },
+          scopeIssues,
+          scopeDuration
+        );
+      }
+      if (apiIssues.length > 0 || apiDuration > 0) {
+        await savePRDLog(
+          savedPrdId,
+          null,
+          'api_review',
+          'api_loop',
+          prdData,
+          { api_endpoints: prdData.api_endpoints },
+          apiIssues,
+          apiDuration
+        );
+      }
+      await savePRDLog(
+        savedPrdId,
+        null,
+        'validation',
+        'final',
+        prdData,
+        null,
+        errors,
+        Date.now() - totalStartTime
+      );
+
       // Extract and save features if they exist
       if (prdData.features && prdData.features.length > 0) {
         const { extractFeaturesFromPRD } = await import(
@@ -186,12 +288,15 @@ export async function POST(request: NextRequest) {
         const features = extractFeaturesFromPRD(prdData);
 
         // Use upsert function for atomic feature creation
-        const { error: upsertError } = await supabase.rpc('upsert_prd_features', {
-          _project: projectId,
-          _version: prd.id, // Use PRD ID as version for initial creation
-          _features: features,
-          _user: user.id,
-        });
+        const { error: upsertError } = await supabase.rpc(
+          'upsert_prd_features',
+          {
+            _project: projectId,
+            _version: prd.id, // Use PRD ID as version for initial creation
+            _features: features,
+            _user: user.id,
+          }
+        );
 
         if (upsertError) {
           console.error('Error upserting features:', upsertError);
@@ -219,203 +324,154 @@ export async function POST(request: NextRequest) {
   }
 }
 
-const PRD_EXAMPLES = `
-예시 입력: "URL 기반 노트 앱"
+// removed PRD_EXAMPLES (SQL 금지 정책)
 
-예시 출력:
-{
-  "api_endpoints": [
-    {
-      "method": "POST",
-      "path": "/api/sources/create",
-      "description": "URL 스크래핑 및 요약 생성",
-      "request_body": {
-        "notebook_id": "uuid",
-        "url": "string",
-        "type": "url"
-      },
-      "response": {
-        "source_id": "uuid",
-        "title": "string",
-        "summary": "string"
-      },
-      "auth_required": true,
-      "error_codes": {
-        "400": "Invalid URL format",
-        "422": "Scraping failed",
-        "429": "Rate limit exceeded"
-      }
-    }
-  ],
-  "database_schema": {
-    "tables": [
-      {
-        "name": "sources",
-        "sql": "CREATE TABLE sources (\\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\\n  notebook_id UUID REFERENCES notebooks(id),\\n  url TEXT,\\n  summary TEXT,\\n  created_at TIMESTAMPTZ DEFAULT NOW()\\n);",
-        "indexes": ["CREATE INDEX idx_sources_notebook ON sources(notebook_id);"],
-        "rls_policy": "CREATE POLICY sources_policy ON sources\\n  FOR ALL USING (notebook_id IN (\\n    SELECT id FROM notebooks WHERE owner_id = auth.uid()\\n  ));"
-      }
-    ]
-  },
-  "implementation_phases": [
-    {
-      "phase": "Phase 0",
-      "title": "DB & Auth",
-      "estimated_hours": 4,
-      "tasks": [
-        "Supabase 프로젝트 생성",
-        "위 SQL 실행하여 스키마 생성",
-        "RLS 정책 테스트 (다른 유저 접근 403 확인)"
-      ],
-      "acceptance_criteria": [
-        "psql로 테이블 생성 확인",
-        "Postman으로 타 유저 접근 시 403 반환"
-      ]
-    }
-  ]
-}
-`;
-
-// PRD_SYSTEM_PROMPT는 이제 중앙화된 PRD_SYSTEM_PROMPT_V3 사용
-
+// PRD_V4 생성기
 async function generatePRD(
   idea: string,
   previousErrors?: string[]
-): Promise<PRDData> {
-  const prompt = makePRDCreatePrompt(idea, previousErrors);
+): Promise<PRDV4> {
+  const prompt = makePRDCreatePromptV4(idea, previousErrors);
 
   try {
-    const data = await callOpenAIJSON(PRD_SYSTEM_PROMPT_V3, prompt);
-    console.log('[LLM][create] v=PRD_V3');
-    const prdData = data; // JSON 객체
-
-    // Validate structure
-    if (
-      !prdData.summary ||
-      !Array.isArray(prdData.goals) ||
-      !Array.isArray(prdData.key_features)
-    ) {
-      throw new Error('Invalid PRD structure received');
-    }
-
-    return prdData;
+    const data = await callOpenAIJSON(PRD_SYSTEM_PROMPT_V4, prompt);
+    console.log('[LLM][create] v=PRD_V4');
+    return data;
   } catch (error) {
     console.error('OpenAI API error:', error);
-
-    // Fallback PRD structure
     return {
       summary: `사용자 아이디어: ${idea}`,
-      goals: ['프로젝트 목표를 정의하세요'],
-      key_features: ['주요 기능을 나열하세요'],
-      out_of_scope: ['범위 밖 기능을 명시하세요'],
-      risks: ['잠재적 위험 요소를 식별하세요'],
-      acceptance: ['수용 기준을 정의하세요'],
-      technical_requirements: {
-        frontend: [],
-        backend: [],
-        database: [],
-        infrastructure: [],
-      },
-      implementation_phases: [],
-      database_schema: { tables: [] },
+      why: '사용자 문제/의도를 간략히 설명하세요',
+      goals: ['D30 내 활성 사용자 ≥ 100'],
+      scope: { in_scope: [], out_of_scope: [] },
+      key_features: [],
+      schema_summary: { entities: [] },
       api_endpoints: [],
+      implementation_phases: [],
+      definition_of_done: ['핵심 사용자 시나리오 동작 검증'],
+      risks: [],
+      prompt_version: 'PRD_V4',
     };
   }
 }
 
-async function validatePRD(prd: PRDData): Promise<string[]> {
-  const errors: string[] = [];
+async function validatePRD_V4(prd: PRDV4): Promise<string[]> {
+  const res = validatePRDV4(prd);
+  if (res.ok) return [];
+  return res.errors;
+}
 
-  if (!prd.api_endpoints || prd.api_endpoints.length < 5) {
-    errors.push(
-      `API 엔드포인트가 5개 미만 (현재: ${prd.api_endpoints?.length || 0}개)`
-    );
+async function reviewPRD_V4(base: unknown, issues: string[]): Promise<PRDV4> {
+  const prompt = makePRDReviewerPromptV4(base, issues);
+  const data = await callOpenAIJSON(PRD_SYSTEM_PROMPT_V4, prompt);
+  console.log('[LLM][review] v=PRD_V4');
+  // Ensure prompt_version is always PRD_V4 after review
+  data.prompt_version = 'PRD_V4';
+  return data as PRDV4;
+}
+
+/**
+ * Scope 전용 reviewer
+ */
+async function reviewScope_V4(
+  base: PRDV4
+): Promise<{ scope: { in_scope: string[]; out_of_scope: string[] } }> {
+  const prompt = makeScopeReviewerPrompt(base, base.key_features || []);
+  const data = await callOpenAIJSON(PRD_SYSTEM_PROMPT_V4, prompt);
+  console.log('[LLM][scope_review] v=PRD_V4');
+  return data as { scope: { in_scope: string[]; out_of_scope: string[] } };
+}
+
+/**
+ * API 계약 전용 reviewer
+ */
+async function reviewAPI_V4(base: PRDV4): Promise<{ api_endpoints: any[] }> {
+  const entities = base.schema_summary?.entities;
+  const prompt = makeAPIReviewerPrompt(base, entities);
+  const data = await callOpenAIJSON(PRD_SYSTEM_PROMPT_V4, prompt);
+  console.log('[LLM][api_review] v=PRD_V4');
+  return data as { api_endpoints: any[] };
+}
+
+/**
+ * API endpoints 검증
+ */
+function validateAPIEndpoints(prd: PRDV4): string[] {
+  const issues: string[] = [];
+
+  if (!prd.api_endpoints || prd.api_endpoints.length === 0) {
+    issues.push('api_endpoints가 비어있습니다.');
+    return issues;
   }
 
-  if (prd.api_endpoints) {
-    for (const endpoint of prd.api_endpoints) {
-      if (
-        !endpoint.error_codes ||
-        Object.keys(endpoint.error_codes).length === 0
-      ) {
-        errors.push(`${endpoint.path}에 error_codes 누락`);
-      }
+  for (const endpoint of prd.api_endpoints) {
+    // POST/PUT/PATCH는 request_body 필수
+    if (
+      ['POST', 'PUT', 'PATCH'].includes(endpoint.method) &&
+      !endpoint.request_body
+    ) {
+      issues.push(
+        `${endpoint.method} ${endpoint.path}: request_body 샘플 JSON이 필요합니다.`
+      );
+    }
+
+    // 모든 endpoint는 response 샘플 필요
+    if (!endpoint.response) {
+      issues.push(
+        `${endpoint.method} ${endpoint.path}: response 샘플 JSON이 필요합니다.`
+      );
+    }
+
+    // error_codes 최소 1개 필요
+    if (
+      !endpoint.error_codes ||
+      Object.keys(endpoint.error_codes).length === 0
+    ) {
+      issues.push(
+        `${endpoint.method} ${endpoint.path}: error_codes가 필요합니다.`
+      );
     }
   }
 
-  // 스키마 어그노스틱 검증: 관계형 또는 비관계형 중 하나는 반드시 존재
-  if (prd.database_schema) {
-    const hasRelational = (prd.database_schema.relational?.tables?.length ?? 0) > 0;
-    const hasNonRelational = (prd.database_schema.non_relational?.collections?.length ?? 0) > 0;
-    const hasLegacyTables = (prd.database_schema.tables?.length ?? 0) > 0; // 기존 호환성
-    
-    if (!hasRelational && !hasNonRelational && !hasLegacyTables) {
-      errors.push('데이터 스키마: 관계형 또는 비관계형 중 하나는 반드시 포함되어야 합니다');
-    }
-  } else {
-    errors.push('데이터 스키마가 누락되었습니다');
-  }
+  return issues;
+}
 
-  if (!prd.implementation_phases || prd.implementation_phases.length === 0) {
-    errors.push('구현 단계 누락');
-  } else {
-    for (const phase of prd.implementation_phases) {
-      if (!phase.acceptance_criteria || phase.acceptance_criteria.length < 3) {
-        errors.push(`${phase.phase}에 acceptance_criteria가 3개 미만`);
-      }
-    }
-  }
+/**
+ * PRD 로그 저장 (품질 트래킹)
+ */
+async function savePRDLog(
+  projectPrdId: string | null,
+  prdVersionId: string | null,
+  logType:
+    | 'generation'
+    | 'review'
+    | 'scope_review'
+    | 'api_review'
+    | 'validation',
+  stage: string,
+  inputData: unknown,
+  outputData: unknown | null,
+  issues: string[],
+  durationMs: number
+) {
+  try {
+    const { error } = await supabase.from('prd_logs').insert({
+      project_prd_id: projectPrdId,
+      prd_version_id: prdVersionId,
+      log_type: logType,
+      stage,
+      input_data: inputData as any,
+      output_data: outputData as any,
+      issues: issues as any,
+      resolved: issues.length === 0,
+      duration_ms: durationMs,
+    });
 
-  // Features validation - MANDATORY 5-7 features (PRD_V3)
-  if (!prd.features || !Array.isArray(prd.features)) {
-    errors.push('features 배열이 누락되었습니다');
-  } else if (prd.features.length < 5) {
-    errors.push(
-      `features가 5개 미만 (현재: ${prd.features.length}개) - 최소 5개 필요 (PRD_V3)`
-    );
-  } else if (prd.features.length > 7) {
-    errors.push(
-      `features가 7개 초과 (현재: ${prd.features.length}개) - 최대 7개 권장`
-    );
-  } else {
-    // Validate each feature structure
-    for (let i = 0; i < prd.features.length; i++) {
-      const feature = prd.features[i];
-      if (!feature.name || typeof feature.name !== 'string') {
-        errors.push(`features[${i}]에 name 필드가 누락되었습니다`);
-      }
-      if (
-        !feature.priority ||
-        !['high', 'medium', 'low'].includes(feature.priority)
-      ) {
-        errors.push(
-          `features[${i}]에 유효한 priority 필드가 필요합니다 (high|medium|low)`
-        );
-      }
-      if (!feature.risk || !['high', 'medium', 'low'].includes(feature.risk)) {
-        errors.push(
-          `features[${i}]에 유효한 risk 필드가 필요합니다 (high|medium|low)`
-        );
-      }
-      if (
-        feature.effort &&
-        !['low', 'medium', 'high'].includes(feature.effort)
-      ) {
-        errors.push(
-          `features[${i}]에 유효한 effort 필드가 필요합니다 (low|medium|high)`
-        );
-      }
+    if (error) {
+      console.error('[PRD_LOG] Failed to save log:', error);
+      // 로그 저장 실패는 PRD 생성 실패로 처리하지 않음 (비중요)
     }
+  } catch (error) {
+    console.error('[PRD_LOG] Unexpected error saving log:', error);
   }
-
-  // NFR 필드 존재 검사 (경고 수준)
-  if (!prd.nfrs) {
-    console.warn('NFRs 섹션이 누락되었습니다 - 성능, 가용성, 보안 등이 포함되어야 합니다');
-  } else {
-    if (!prd.nfrs.performance && !prd.nfrs.availability && !prd.nfrs.security) {
-      console.warn('NFRs에 핵심 필드(performance, availability, security)가 누락되었습니다');
-    }
-  }
-
-  return errors;
 }

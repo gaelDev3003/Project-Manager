@@ -339,6 +339,8 @@ export default function ProjectDetailPage({
         onLeftToggle={() => setLeftPanelOpen(!leftPanelOpen)}
         onRightToggle={() => setRightPanelOpen(!rightPanelOpen)}
         isMobile={isMobile}
+        currentProjectId={params.id}
+        currentProjectName={project?.name}
       />
 
       {/* Main Content */}

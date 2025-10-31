@@ -57,11 +57,30 @@ export interface Feature {
 
 export interface PRDData {
   summary: string;
+  why?: string;
   goals: string[];
   key_features: string[];
   out_of_scope: string[];
   risks: string[];
   acceptance: string[];
+  // V4
+  scope?: {
+    in_scope?: string[];
+    out_of_scope?: string[];
+  };
+  definition_of_done?: string[];
+  schema_summary?: {
+    entities: Array<{
+      name: string;
+      description?: string;
+      fields: Array<{
+        name: string;
+        type: 'string' | 'number' | 'boolean' | 'date' | 'json';
+        notes?: string;
+      }>;
+      relationships?: string[];
+    }>;
+  };
   features?: Feature[];
   technical_requirements?: {
     frontend: string[];
