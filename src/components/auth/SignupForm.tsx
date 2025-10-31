@@ -10,7 +10,6 @@ export default function SignupForm() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
 
   const { signUp } = useAuth();
   const router = useRouter();
@@ -36,55 +35,12 @@ export default function SignupForm() {
 
     if (error) {
       setError(error.message);
+      setLoading(false);
     } else {
-      setSuccess(true);
-      setTimeout(() => {
-        router.push('/auth/login');
-      }, 2000);
+      // 회원가입 성공 시 바로 로그인 페이지로 리다이렉트
+      router.push('/auth/login');
     }
-
-    setLoading(false);
   };
-
-  if (success) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 py-12 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-md w-full">
-          <div className="text-center">
-            <div className="mx-auto w-20 h-20 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full flex items-center justify-center mb-6 shadow-lg">
-              <svg
-                className="h-10 w-10 text-white"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M5 13l4 4L19 7"
-                />
-              </svg>
-            </div>
-            <h2 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent mb-4">
-              회원가입 완료! 🎉
-            </h2>
-            <p className="text-gray-600 leading-relaxed mb-6">
-              이메일을 확인하고 로그인해주세요.
-              <br />
-              프로젝트 매니저의 모든 기능을 이용하실 수 있습니다.
-            </p>
-            <div className="bg-white/80 backdrop-blur-sm rounded-xl p-6 shadow-sm border border-gray-100">
-              <p className="text-sm text-gray-600">
-                💡 <strong>다음 단계:</strong> 이메일로 전송된 인증 링크를
-                클릭하세요
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 py-12 px-4 sm:px-6 lg:px-8">

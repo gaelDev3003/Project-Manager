@@ -114,7 +114,43 @@ ${phase.acceptance_criteria.map((criteria: string) => `- ${criteria}`).join('\n'
 `;
     }
 
-    // Add database schema if available
+    // Add PRD_V4 fields to markdown export
+    if (prd.why) {
+      prdText += `\n## 💡 Why (왜 만드는가)\n${prd.why}\n`;
+    }
+
+    if (prd.scope) {
+      prdText += `\n## 📋 Scope (범위)\n`;
+      if (prd.scope.in_scope && prd.scope.in_scope.length > 0) {
+        prdText += `### ✅ 범위 내\n${prd.scope.in_scope.map((item: string) => `- ${item}`).join('\n')}\n`;
+      }
+      if (prd.scope.out_of_scope && prd.scope.out_of_scope.length > 0) {
+        prdText += `### ❌ 범위 밖\n${prd.scope.out_of_scope.map((item: string) => `- ${item}`).join('\n')}\n`;
+      }
+    }
+
+    if (prd.definition_of_done && prd.definition_of_done.length > 0) {
+      prdText += `\n## ✅ Definition of Done (완료 정의)\n${prd.definition_of_done.map((dod: string) => `- ${dod}`).join('\n')}\n`;
+    }
+
+    if (prd.schema_summary && prd.schema_summary.entities) {
+      prdText += `\n## 🗄️ Schema Summary\n`;
+      for (const entity of prd.schema_summary.entities) {
+        prdText += `### ${entity.name}\n`;
+        if (entity.description) {
+          prdText += `${entity.description}\n\n`;
+        }
+        if (entity.fields && entity.fields.length > 0) {
+          prdText += `**필드:**\n${entity.fields.map((f: any) => `- \`${f.name}\` (${f.type})${f.notes ? `: ${f.notes}` : ''}`).join('\n')}\n`;
+        }
+        if (entity.relationships && entity.relationships.length > 0) {
+          prdText += `**관계:**\n${entity.relationships.map((r: string) => `- ${r}`).join('\n')}\n`;
+        }
+        prdText += '\n';
+      }
+    }
+
+    // Add database schema if available (V3 호환)
     if (
       prd.database_schema &&
       prd.database_schema.tables &&
@@ -204,7 +240,9 @@ ${table.rls_policy}
         </div>
 
         <div>
-          <h4 className="text-lg font-semibold text-gray-900 mb-3">주요 기능</h4>
+          <h4 className="text-lg font-semibold text-gray-900 mb-3">
+            주요 기능
+          </h4>
           <ul className="list-disc list-inside text-gray-700 space-y-2 leading-relaxed">
             {prd.key_features?.map((feature: any, index: number) => (
               <li key={index}>
@@ -425,7 +463,113 @@ ${table.rls_policy}
           </div>
         )}
 
-        {/* Database Schema */}
+        {/* PRD_V4: Why Section */}
+        {prd.why && (
+          <div>
+            <h4 className="text-lg font-semibold text-gray-900 mb-3">💡 Why (왜 만드는가)</h4>
+            <p className="text-gray-700 leading-relaxed">{prd.why}</p>
+          </div>
+        )}
+
+        {/* PRD_V4: Scope Section */}
+        {prd.scope && (
+          <div>
+            <h4 className="text-lg font-semibold text-gray-900 mb-3">📋 Scope (범위)</h4>
+            {prd.scope.in_scope && prd.scope.in_scope.length > 0 && (
+              <div className="mb-3">
+                <h5 className="text-sm font-medium text-gray-700 mb-2">✅ 범위 내</h5>
+                <ul className="list-disc list-inside text-gray-700 space-y-1">
+                  {prd.scope.in_scope.map((item: string, index: number) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {prd.scope.out_of_scope && prd.scope.out_of_scope.length > 0 && (
+              <div>
+                <h5 className="text-sm font-medium text-gray-700 mb-2">❌ 범위 밖</h5>
+                <ul className="list-disc list-inside text-gray-700 space-y-1">
+                  {prd.scope.out_of_scope.map((item: string, index: number) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* PRD_V4: Definition of Done Section */}
+        {prd.definition_of_done && prd.definition_of_done.length > 0 && (
+          <div>
+            <h4 className="text-lg font-semibold text-gray-900 mb-3">
+              ✅ Definition of Done (완료 정의)
+            </h4>
+            <ul className="list-disc list-inside text-gray-700 space-y-2 leading-relaxed">
+              {prd.definition_of_done.map((dod: string, index: number) => (
+                <li key={index}>{dod}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* PRD_V4: Schema Summary */}
+        {prd.schema_summary && prd.schema_summary.entities && prd.schema_summary.entities.length > 0 && (
+          <div>
+            <h4 className="text-md font-medium text-gray-900 mb-2">
+              🗄️ Schema Summary
+            </h4>
+            <div className="space-y-4">
+              {prd.schema_summary.entities.map((entity: any, index: number) => (
+                <div
+                  key={index}
+                  className="border border-gray-200 rounded-lg p-4"
+                >
+                  <h5 className="text-sm font-medium text-gray-900 mb-2">
+                    엔티티:{' '}
+                    <code className="bg-gray-100 px-1 rounded">
+                      {entity.name}
+                    </code>
+                  </h5>
+                  {entity.description && (
+                    <p className="text-xs text-gray-600 mb-2">{entity.description}</p>
+                  )}
+                  {entity.fields && entity.fields.length > 0 && (
+                    <div className="mb-2">
+                      <h6 className="text-xs font-medium text-gray-700 mb-1">
+                        필드:
+                      </h6>
+                      <div className="space-y-1">
+                        {entity.fields.map((field: any, fieldIndex: number) => (
+                          <div key={fieldIndex} className="flex items-center gap-2 text-xs">
+                            <code className="bg-gray-50 px-1 rounded">{field.name}</code>
+                            <span className="text-gray-600">({field.type})</span>
+                            {field.notes && (
+                              <span className="text-gray-500 italic">{field.notes}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {entity.relationships && entity.relationships.length > 0 && (
+                    <div>
+                      <h6 className="text-xs font-medium text-gray-700 mb-1">
+                        관계:
+                      </h6>
+                      <ul className="list-disc list-inside text-gray-600 space-y-1 text-xs">
+                        {entity.relationships.map((rel: string, relIndex: number) => (
+                          <li key={relIndex}>{rel}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Database Schema (V3 호환) */}
         {prd.database_schema &&
           prd.database_schema.tables &&
           prd.database_schema.tables.length > 0 && (

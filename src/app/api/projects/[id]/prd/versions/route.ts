@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase';
-import { PRD_SYSTEM_PROMPT_V3, makePRDRevisePrompt } from '@/lib/prompts/prd-template';
+import {
+  PRD_SYSTEM_PROMPT_V4,
+  makePRDReviewerPromptV4,
+} from '@/lib/prompts/prd-template';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 // Environment configuration
-const MODEL_PROVIDER = (process.env.MODEL_PROVIDER ?? 'openai').toLowerCase();
 const OPENAI_PRD_MODEL = (process.env.OPENAI_PRD_MODEL ?? 'gpt-4o-mini').trim();
 const OPENAI_PRD_TEMPERATURE = Number(
   process.env.OPENAI_PRD_TEMPERATURE ?? '0.2'
@@ -50,7 +52,7 @@ async function callOpenAIJSON(systemPrompt: string, userPrompt: string) {
 
       const duration = Date.now() - t0;
       console.log(
-        `[LLM] model=${OPENAI_PRD_MODEL}, dur_ms=${duration}, status=${res.status}, prompt_v=PRD_V3`
+        `[LLM] model=${OPENAI_PRD_MODEL}, dur_ms=${duration}, status=${res.status}, prompt_v=PRD_V4`
       );
 
       if (!res.ok) {
@@ -71,11 +73,12 @@ async function callOpenAIJSON(systemPrompt: string, userPrompt: string) {
         console.log(`[LLM] JSON parse failed, trying extractFirstJson`);
         return JSON.parse(extractFirstJson(content));
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const duration = Date.now() - t0;
+      const errorObj = error as { message?: string };
       console.log(
         `[LLM] attempt=${attempt + 1} failed after ${duration}ms:`,
-        error?.message || 'Unknown error'
+        errorObj?.message || 'Unknown error'
       );
 
       if (attempt === maxRetries) {
@@ -83,11 +86,12 @@ async function callOpenAIJSON(systemPrompt: string, userPrompt: string) {
       }
 
       // AbortError, 408, 429, 5xx에 대해서만 재시도
+      const errorWithName = error as { name?: string; message?: string };
       const shouldRetry =
-        error?.name === 'AbortError' ||
-        error?.message?.includes('408') ||
-        error?.message?.includes('429') ||
-        error?.message?.includes('5');
+        errorWithName?.name === 'AbortError' ||
+        errorWithName?.message?.includes('408') ||
+        errorWithName?.message?.includes('429') ||
+        errorWithName?.message?.includes('5');
 
       if (shouldRetry) {
         const delay = baseDelay * Math.pow(1.3, attempt);
@@ -108,18 +112,44 @@ function getAuthToken(request: NextRequest) {
   return authHeader.replace('Bearer ', '');
 }
 
-async function generateRevisionLLM(base: any, feedbackText?: string) {
-  const userPrompt = makePRDRevisePrompt(base, feedbackText || '');
+type V4FeatureLite = {
+  name?: string;
+  description?: string;
+  notes?: string;
+  priority?: string;
+  risk?: string;
+  effort?: string;
+};
+type V4EndpointLite = { method?: string; path?: string; description?: string };
+
+async function generateRevisionLLM(base: unknown, feedbackText?: string) {
+  const userPrompt = makePRDReviewerPromptV4(
+    base,
+    feedbackText ? [feedbackText] : []
+  );
   try {
-    const parsed = await callOpenAIJSON(PRD_SYSTEM_PROMPT_V3, userPrompt);
-    console.log('[LLM][versions] v=PRD_V3');
-    if (parsed?.content_md && parsed?.diagram_mermaid && parsed?.summary_json)
-      return parsed;
+    const prd = await callOpenAIJSON(PRD_SYSTEM_PROMPT_V4, userPrompt);
+    console.log('[LLM][versions] v=PRD_V4');
+    // Ensure prompt_version is always PRD_V4
+    prd.prompt_version = 'PRD_V4';
+    // Convert PRD JSON to version payload
+    const content_md = `# ${prd.summary || 'PRD Revision'}\n\n## Why\n${prd.why || ''}\n\n## Goals\n${(prd.goals || []).map((g: string) => `- ${g}`).join('\n')}\n\n## Key Features\n${(prd.key_features || []).map((f: V4FeatureLite) => `- **${f.name}**: ${f.notes || f.description || ''} (P:${f.priority || 'N/A'}, R:${f.risk || 'N/A'}, E:${f.effort || 'N/A'})`).join('\n')}\n\n## Schema Summary\n${prd.schema_summary ? JSON.stringify(prd.schema_summary, null, 2) : ''}\n\n## API Endpoints\n${(prd.api_endpoints || []).map((e: V4EndpointLite) => `- **${e.method}** ${e.path}: ${e.description}`).join('\n')}\n\n## DoD\n${(prd.definition_of_done || []).map((d: string) => `- ${d}`).join('\n')}`;
+    return {
+      content_md,
+      summary_json: prd,
+      diagram_mermaid: 'graph TD; A[Start] --> B[Revised];',
+    };
   } catch {}
   return {
     content_md:
       '# PRD Revision\n\nNo LLM available. This is a placeholder revision.',
-    summary_json: { sections: [], kpi: [], risks: [], endpoints: [] },
+    summary_json: {
+      prompt_version: 'PRD_V4',
+      sections: [],
+      kpi: [],
+      risks: [],
+      endpoints: [],
+    },
     diagram_mermaid: 'graph TD; A[Start] --> B[Placeholder];',
   };
 }
@@ -180,7 +210,7 @@ export async function GET(
       return NextResponse.json({ error: error.message }, { status: 500 });
 
     return NextResponse.json({ versions: versions || [] });
-  } catch (e) {
+  } catch {
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
@@ -239,7 +269,7 @@ export async function POST(
     const nextVersion = (maxRows?.[0]?.version || 0) + 1;
 
     // load base
-    let base: any = null;
+    let base: unknown = null;
     if (baseVersionId) {
       const { data: baseV, error: baseErr } = await supabase
         .from('project_prd_versions')
@@ -283,7 +313,7 @@ export async function POST(
       .eq('id', prdRow.id);
 
     return NextResponse.json({ version: inserted });
-  } catch (e) {
+  } catch {
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

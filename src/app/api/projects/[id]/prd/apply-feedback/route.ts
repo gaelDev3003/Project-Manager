@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSupabase } from '@/lib/supabase';
 import {
-  PRD_SYSTEM_PROMPT_V3,
-  makePRDRevisePrompt,
+  PRD_SYSTEM_PROMPT_V4,
+  makePRDReviewerPromptV4,
 } from '@/lib/prompts/prd-template';
+import type { Feature } from '@/types/prd';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 // Environment configuration
-const MODEL_PROVIDER = (process.env.MODEL_PROVIDER ?? 'openai').toLowerCase();
 const OPENAI_PRD_MODEL = (process.env.OPENAI_PRD_MODEL ?? 'gpt-4o-mini').trim();
 const OPENAI_PRD_TEMPERATURE = Number(
   process.env.OPENAI_PRD_TEMPERATURE ?? '0.2'
@@ -53,7 +53,7 @@ async function callOpenAIJSON(systemPrompt: string, userPrompt: string) {
 
       const duration = Date.now() - t0;
       console.log(
-        `[LLM] model=${OPENAI_PRD_MODEL}, dur_ms=${duration}, status=${res.status}, prompt_v=PRD_V3`
+        `[LLM] model=${OPENAI_PRD_MODEL}, dur_ms=${duration}, status=${res.status}, prompt_v=PRD_V4`
       );
 
       if (!res.ok) {
@@ -81,11 +81,12 @@ async function callOpenAIJSON(systemPrompt: string, userPrompt: string) {
         );
         return JSON.parse(extracted);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const duration = Date.now() - t0;
+      const errorObj = error as { message?: string };
       console.log(
         `[LLM] attempt=${attempt + 1} failed after ${duration}ms:`,
-        error?.message || 'Unknown error'
+        errorObj?.message || 'Unknown error'
       );
 
       if (attempt === maxRetries) {
@@ -93,11 +94,12 @@ async function callOpenAIJSON(systemPrompt: string, userPrompt: string) {
       }
 
       // AbortError, 408, 429, 5xx에 대해서만 재시도
+      const errorWithName = error as { name?: string; message?: string };
       const shouldRetry =
-        error?.name === 'AbortError' ||
-        error?.message?.includes('408') ||
-        error?.message?.includes('429') ||
-        error?.message?.includes('5');
+        errorWithName?.name === 'AbortError' ||
+        errorWithName?.message?.includes('408') ||
+        errorWithName?.message?.includes('429') ||
+        errorWithName?.message?.includes('5');
 
       if (shouldRetry) {
         const delay = baseDelay * Math.pow(1.3, attempt);
@@ -118,42 +120,37 @@ function getAuthToken(request: NextRequest) {
   return authHeader.replace('Bearer ', '');
 }
 
-async function generateRevisionLLM(base: any, feedbackText: string) {
+type V4FeatureLite = {
+  name?: string;
+  description?: string;
+  notes?: string;
+  priority?: string;
+  risk?: string;
+  effort?: string;
+};
+type V4EndpointLite = { method?: string; path?: string; description?: string };
+
+async function generateRevisionLLM(base: unknown, feedbackText: string) {
   // API 키 확인
   if (!process.env.OPENAI_API_KEY) {
     throw new Error('OPENAI_API_KEY not found in environment variables');
   }
 
-  const userPrompt = makePRDRevisePrompt(base, feedbackText);
+  const userPrompt = makePRDReviewerPromptV4(base, [feedbackText]);
 
   try {
-    const parsed = await callOpenAIJSON(PRD_SYSTEM_PROMPT_V3, userPrompt);
-    console.log('[LLM][revise] v=PRD_V3');
+    const parsed = await callOpenAIJSON(PRD_SYSTEM_PROMPT_V4, userPrompt);
+    console.log('[LLM][revise] v=PRD_V4');
 
-    // PRD_V3 형식 검증: summary와 key_features가 있는지 확인
-    if (!parsed?.summary || !parsed?.key_features) {
-      throw new Error('Invalid response format from OpenAI API');
-    }
+    // Ensure prompt_version is always PRD_V4
+    parsed.prompt_version = 'PRD_V4';
 
-    // 기존 형식으로 변환 (호환성 유지)
+    // V4 변환: content_md 생성, summary_json은 V4 그대로 저장
+    const content_md = `# ${parsed.summary}\n\n## Why\n${parsed.why || ''}\n\n## Goals\n${parsed.goals?.map((g: string) => `- ${g}`).join('\n') || ''}\n\n## Key Features\n${parsed.key_features?.map((f: V4FeatureLite) => `- **${f.name}**: ${f.description || f.notes || ''} (P:${f.priority || 'N/A'}, R:${f.risk || 'N/A'}, E:${f.effort || 'N/A'})`).join('\n') || ''}\n\n## Schema Summary\n${parsed.schema_summary ? JSON.stringify(parsed.schema_summary, null, 2) : ''}\n\n## API Endpoints\n${parsed.api_endpoints?.map((e: V4EndpointLite) => `- **${e.method}** ${e.path}: ${e.description}`).join('\n') || ''}\n\n## DoD\n${parsed.definition_of_done?.map((d: string) => `- ${d}`).join('\n') || ''}`;
     const converted = {
-      content_md: `# ${parsed.summary}\n\n## 목표\n${parsed.goals?.map((g: string) => `- ${g}`).join('\n') || ''}\n\n## 주요 기능\n${parsed.key_features?.map((f: any) => `- **${f.name}**: ${f.description || f.notes || ''} (우선순위: ${f.priority || 'N/A'}, 위험도: ${f.risk || 'N/A'}, 노력: ${f.effort || 'N/A'})`).join('\n') || ''}\n\n## 기술 스택\n${typeof parsed.technical_stack === 'object' ? JSON.stringify(parsed.technical_stack, null, 2) : parsed.technical_stack || ''}\n\n## 데이터베이스 스키마\n${JSON.stringify(parsed.database_schema, null, 2)}\n\n## API 엔드포인트\n${parsed.api_endpoints?.map((e: any) => `- **${e.method}** ${e.path}: ${e.description}`).join('\n') || ''}\n\n## NFRs\n${JSON.stringify(parsed.nfrs, null, 2)}`,
-      summary_json: {
-        summary: parsed.summary,
-        goals: parsed.goals,
-        key_features: parsed.key_features,
-        technical_stack: parsed.technical_stack,
-        database_schema: parsed.database_schema,
-        api_endpoints: parsed.api_endpoints,
-        implementation_phases: parsed.implementation_phases,
-        nfrs: parsed.nfrs,
-        environment_variables: parsed.environment_variables,
-        out_of_scope: parsed.out_of_scope,
-        risks: parsed.risks,
-        acceptance_criteria: parsed.acceptance_criteria,
-        prompt_version: parsed.prompt_version,
-      },
-      diagram_mermaid: 'graph TD; A[Start] --> B[Placeholder];', // 기본값
+      content_md,
+      summary_json: parsed,
+      diagram_mermaid: 'graph TD; A[Start] --> B[Revised];',
     };
 
     return converted;
@@ -169,7 +166,6 @@ export async function POST(
 ) {
   try {
     let supabase = getServerSupabase();
-    let user;
 
     const {
       data: { user: cookieUser },
@@ -191,9 +187,6 @@ export async function POST(
       } = await supabase.auth.getUser(token);
       if (!tokenUser)
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      user = tokenUser;
-    } else {
-      user = cookieUser;
     }
 
     const { versionId, message } = await request.json();
@@ -341,7 +334,7 @@ export async function POST(
       revision.summary_json
     );
 
-    let features: any[] = [];
+    let features: Feature[] = [];
     try {
       features = extractFeaturesFromPRD(revision.summary_json);
       console.log('Features extracted successfully:', features);
@@ -405,7 +398,7 @@ export async function POST(
       .eq('id', projectPrdId);
 
     return NextResponse.json({ version: inserted });
-  } catch (e) {
+  } catch {
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
