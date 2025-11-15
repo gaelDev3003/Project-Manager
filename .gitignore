@@ -78,9 +78,11 @@ playwright-report
 
 .playwright-mcp
 
-# Task files
+# Task files (taskmaster)
 tasks.json
-tasks/ 
+.taskmaster/tasks/
+# Ignore root-level tasks/ directory only
+/tasks/ 
 
 
 artifacts/
