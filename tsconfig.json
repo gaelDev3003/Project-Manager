@@ -19,7 +19,10 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@taskmaker/core/*": ["./taskMaker/src/core/*"],
+      "@taskmaker/ai/*": ["./taskMaker/src/services/ai/*"],
+      "@taskmaker/lib/*": ["./taskMaker/src/lib/*"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],

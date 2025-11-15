@@ -15,6 +15,10 @@ import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { PRDResponse } from '@/types/prd';
 import { FullPrdSheet } from '@/components/prd/FullPrdSheet';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { TasksTab } from '@/components/tasks/TasksTab';
+import { TaskDetail } from '@/components/tasks/TaskDetail';
+import type { TasksJson, Task } from '@taskmaker/core/types/tasks';
 
 interface Project {
   id: string;
@@ -47,6 +51,9 @@ export default function ProjectDetailPage({
   const [fullPrdOpen, setFullPrdOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [userClickedBackToList, setUserClickedBackToList] = useState(false);
+  const [activeTab, setActiveTab] = useState<'prd' | 'tasks'>('prd');
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [tasksData, setTasksData] = useState<TasksJson | null>(null);
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -345,6 +352,7 @@ export default function ProjectDetailPage({
         isMobile={isMobile}
         currentProjectId={params.id}
         currentProjectName={project?.name}
+        showRightPanel={true}
       />
 
       {/* Main Content */}
@@ -407,61 +415,111 @@ export default function ProjectDetailPage({
           </aside>
         )}
 
-        {/* CENTER PANEL - Chat & Feedback */}
+        {/* CENTER PANEL - Tabs (PRD | Tasks) */}
         <main className="flex-1 flex flex-col min-w-0">
-          <ScrollArea className="flex-1 h-0">
-            <div className="p-6">
-              <ChatPanel
-                projectId={params.id}
-                onPRDFinalized={async () => {
-                  // PRD가 완료되면 버전 목록을 새로고침
-                  const updatedVersions = await fetchVersions();
-                  // 새로 생성된 버전을 자동으로 선택
-                  if (updatedVersions.length > 0) {
-                    const latestVersion = updatedVersions[0]; // 최신 버전이 첫 번째
-                    handleVersionSelect(latestVersion.id);
-                  }
-                }}
-                selectedVersion={
-                  selectedVersion
-                    ? {
-                        id: selectedVersion.id,
-                        title: `PRD v${selectedVersion.version}`,
-                        date:
-                          selectedVersion.created_at ||
-                          new Date().toISOString(),
-                      }
-                    : undefined
-                }
-              />
+          <Tabs
+            value={activeTab}
+            onValueChange={(value) => setActiveTab(value as 'prd' | 'tasks')}
+            className="flex-1 flex flex-col h-full"
+          >
+            <div className="border-b border-gray-200 bg-white px-6 pt-4">
+              <TabsList>
+                <TabsTrigger value="prd">PRD</TabsTrigger>
+                <TabsTrigger value="tasks">Tasks</TabsTrigger>
+              </TabsList>
             </div>
-          </ScrollArea>
+
+            <TabsContent value="prd" className="flex-1 flex flex-col mt-0">
+              <ScrollArea className="flex-1 h-0">
+                <div className="p-6">
+                  <ChatPanel
+                    projectId={params.id}
+                    onPRDFinalized={async () => {
+                      // PRD가 완료되면 버전 목록을 새로고침
+                      const updatedVersions = await fetchVersions();
+                      // 새로 생성된 버전을 자동으로 선택
+                      if (updatedVersions.length > 0) {
+                        const latestVersion = updatedVersions[0]; // 최신 버전이 첫 번째
+                        handleVersionSelect(latestVersion.id);
+                      }
+                    }}
+                    selectedVersion={
+                      selectedVersion
+                        ? {
+                            id: selectedVersion.id,
+                            title: `PRD v${selectedVersion.version}`,
+                            date:
+                              selectedVersion.created_at ||
+                              new Date().toISOString(),
+                          }
+                        : undefined
+                    }
+                  />
+                </div>
+              </ScrollArea>
+            </TabsContent>
+
+            <TabsContent value="tasks" className="flex-1 flex flex-col mt-0 min-h-0">
+              <TasksTab
+                projectId={params.id}
+                prdVersionId={selectedVersionId}
+                prdContentMd={selectedVersion?.content_md || null}
+                selectedTaskId={selectedTaskId}
+                onTaskSelect={setSelectedTaskId}
+                onTasksChange={setTasksData}
+              />
+            </TabsContent>
+          </Tabs>
         </main>
 
-        {/* RIGHT PANEL - Insights */}
+        {/* RIGHT PANEL - Insights (PRD tab) or Task Detail (Tasks tab) */}
         {isMobile ? (
           <Sheet open={rightPanelOpen} onOpenChange={setRightPanelOpen}>
             <SheetContent side="right" className="w-full p-0 sm:w-96">
+              {activeTab === 'prd' ? (
+                <InsightsPanel
+                  projectId={params.id}
+                  selectedVersion={selectedVersion}
+                  previousVersion={prevVersion}
+                  isOpen={rightPanelOpen}
+                  onClose={() => setRightPanelOpen(false)}
+                  isMobile={true}
+                />
+              ) : (
+                <div className="h-full">
+                  <ScrollArea className="h-full">
+                    <TaskDetail
+                      task={
+                        tasksData?.tasks.find((t) => t.id === selectedTaskId) ||
+                        null
+                      }
+                    />
+                  </ScrollArea>
+                </div>
+              )}
+            </SheetContent>
+          </Sheet>
+        ) : (
+          <div className="w-96 border-l border-gray-100 bg-white">
+            {activeTab === 'prd' ? (
               <InsightsPanel
                 projectId={params.id}
                 selectedVersion={selectedVersion}
                 previousVersion={prevVersion}
                 isOpen={rightPanelOpen}
                 onClose={() => setRightPanelOpen(false)}
-                isMobile={true}
+                isMobile={false}
               />
-            </SheetContent>
-          </Sheet>
-        ) : (
-          <div className="w-96 border-l border-gray-100 bg-white">
-            <InsightsPanel
-              projectId={params.id}
-              selectedVersion={selectedVersion}
-              previousVersion={prevVersion}
-              isOpen={rightPanelOpen}
-              onClose={() => setRightPanelOpen(false)}
-              isMobile={false}
-            />
+            ) : (
+              <ScrollArea className="h-full">
+                <TaskDetail
+                  task={
+                    tasksData?.tasks.find((t) => t.id === selectedTaskId) ||
+                    null
+                  }
+                />
+              </ScrollArea>
+            )}
           </div>
         )}
       </div>

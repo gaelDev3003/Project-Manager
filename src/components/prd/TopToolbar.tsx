@@ -20,6 +20,7 @@ interface TopToolbarProps {
   isMobile?: boolean;
   currentProjectId?: string;
   currentProjectName?: string;
+  showRightPanel?: boolean;
 }
 
 export function TopToolbar({
@@ -30,6 +31,7 @@ export function TopToolbar({
   isMobile = false,
   currentProjectId,
   currentProjectName,
+  showRightPanel = true,
 }: TopToolbarProps) {
   return (
     <header className="flex h-16 items-center justify-between border-b border-gray-100 bg-white/95 backdrop-blur-sm px-6 shadow-sm">
@@ -84,17 +86,19 @@ export function TopToolbar({
       </div>
 
       <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onRightToggle}
-          aria-expanded={rightOpen}
-          aria-controls="insights-panel"
-          aria-label="Toggle insights panel"
-          className="h-8 w-8 hover:bg-gray-50"
-        >
-          <PanelRight className="h-4 w-4" />
-        </Button>
+        {showRightPanel && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onRightToggle}
+            aria-expanded={rightOpen}
+            aria-controls="insights-panel"
+            aria-label="Toggle insights panel"
+            className="h-8 w-8 hover:bg-gray-50"
+          >
+            <PanelRight className="h-4 w-4" />
+          </Button>
+        )}
       </div>
     </header>
   );
