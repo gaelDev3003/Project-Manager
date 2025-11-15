@@ -14,6 +14,7 @@ interface TasksTabProps {
   prdContentMd: string | null;
   selectedTaskId?: string | null;
   onTaskSelect?: (taskId: string | null) => void;
+  onTasksChange?: (tasks: TasksJson | null) => void;
 }
 
 export function TasksTab({
@@ -48,7 +49,7 @@ export function TasksTab({
     if (!prdVersionId) {
       setSavedTasks(null);
       setGeneratedTasks(null);
-      setSelectedTaskId(null);
+      handleTaskSelect(null);
       return;
     }
 
@@ -75,6 +76,7 @@ export function TasksTab({
     };
 
     loadTasks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, prdVersionId]);
 
   const handleGenerateTasks = async () => {
